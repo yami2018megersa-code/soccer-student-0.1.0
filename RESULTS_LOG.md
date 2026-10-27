@@ -83,3 +83,34 @@ Seeds 1000–1059 (118 matches, both sides):
 - **Losses**: 20 → **4** (**-80%**)
 - **Goals against**: 61 → **22** (**-64%**)
 - **Mean decision time**: 0.049 ms → **0.010 ms** (nearly **5× faster**)
+
+---
+
+## Step 3 Experiment — Shot Quality Gating (SHOOT_X = 26.0 Alone)
+Testing the single-variable hypothesis: delaying shots until within ~24 units of goal to address the 11.74 shots/game (2.6% conversion) giveaway loop.
+
+### Benchmark Seeds 1000–1029 (290 matches, 58 per opponent):
+| Opponent | Record (W-D-L) | Win Rate | Goals (GF - GA) | Pts / match |
+|---|---|---|---|---|
+| balanced | 50 - 7 - 1 | 86.2% | 94 - 7 | 2.71 |
+| tactical | 42 - 12 - 4 | 72.4% | 93 - 16 | 2.38 |
+| man_marking | 44 - 14 - 0 | 75.9% | 85 - 2 | 2.52 |
+| possession | 55 - 2 - 1 | 94.8% | 160 - 3 | 2.88 |
+| structured_attack | 53 - 3 - 2 | 91.4% | 104 - 2 | 2.79 |
+| **Total** | **244 - 38 - 8** | **84.1%** | **536 - 30** | **2.65** |
+
+### Unseen Seeds 2000–2029 (290 matches, 58 per opponent):
+| Opponent | Record (W-D-L) | Win Rate | Goals (GF - GA) | Pts / match |
+|---|---|---|---|---|
+| balanced | 47 - 9 - 2 | 81.0% | 79 - 9 | 2.59 |
+| tactical | 44 - 8 - 6 | 75.9% | 85 - 15 | 2.41 |
+| man_marking | 46 - 12 - 0 | 79.3% | 66 - 0 | 2.59 |
+| possession | 56 - 2 - 0 | 96.6% | 152 - 1 | 2.93 |
+| structured_attack | 51 - 6 - 1 | 87.9% | 96 - 4 | 2.74 |
+| **Total** | **244 - 37 - 9** | **84.1%** | **478 - 29** | **2.65** |
+
+### Head-to-Head vs Previous Best (`SHOOT_X = 18.0`, Seeds 1000–1059, 118 matches):
+- **Record**: 30W 46D 42L (25.4% win rate, 39.0% draw rate)
+- **Goals**: 54 - 71
+- **Takeaway**: Against baseline bots whose keepers don't save long shots, shooting from 18 yields easy goals. Against real league opponents (where long shots convert at only 2.6%), delaying shots to x = 26 is the isolated test to evaluate on the course server.
+
