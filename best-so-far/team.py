@@ -15,7 +15,7 @@ sqrt = math.sqrt
 from soccer import TeamController, TeamAction, PlayerAction
 
 # ---- tunables (each one was swept on 30-60 matches per opponent) -----------
-SHOOT_X = 18.0       # shoot as soon as the carrier is beyond this x
+SHOOT_X = 18.0       # shoot as soon as the carrier is beyond this x  [swept: 14>18>22]
 SHOT_MARGIN = 3.2    # aim this far inside each post (target y = +/-(goal_half - margin))
 DRIB_POWER = 0.65    # soft-touch power when carrying the ball
 PASS_DIV = 30.0      # pass power = distance / PASS_DIV (clamped 0.35 .. 1.0)
@@ -30,7 +30,7 @@ USE_DICT = True      # False -> wrap in TeamAction/PlayerAction (fallback, ~6 us
 
 class MyTeam(TeamController):
     name = "MyTeam"
-    version = "3"
+    version = "4"
 
     # state is class-level so a missing reset() call can never crash act()
     _ready = False

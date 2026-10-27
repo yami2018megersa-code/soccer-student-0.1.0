@@ -1,0 +1,8 @@
+# Identity for the marker and the leaderboard. Both tables are required.
+[team]
+name = "Proxy Dribbler"
+version = "1"          # bump when you change your tactics
+
+[[members]]
+name = "Your Name"
+student_number = "2412345"

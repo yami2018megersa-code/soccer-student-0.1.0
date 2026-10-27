@@ -15,7 +15,7 @@ sqrt = math.sqrt
 from soccer import TeamController, TeamAction, PlayerAction
 
 # ---- tunables (each one was swept on 30-60 matches per opponent) -----------
-SHOOT_X = 18.0       # shoot as soon as the carrier is beyond this x  [swept: 14>18>22]
+SHOOT_X = 26.0       # shoot as soon as the carrier is beyond this x  [Step 3: 26.0]
 SHOT_MARGIN = 3.2    # aim this far inside each post (target y = +/-(goal_half - margin))
 DRIB_POWER = 0.65    # soft-touch power when carrying the ball
 PASS_DIV = 30.0      # pass power = distance / PASS_DIV (clamped 0.35 .. 1.0)
@@ -30,7 +30,7 @@ USE_DICT = True      # False -> wrap in TeamAction/PlayerAction (fallback, ~6 us
 
 class MyTeam(TeamController):
     name = "MyTeam"
-    version = "4"
+    version = "5"
 
     # state is class-level so a missing reset() call can never crash act()
     _ready = False
@@ -141,16 +141,33 @@ class MyTeam(TeamController):
             d = hypot(dx, dy) or 1.0
             out[0] = {"movement": (0.0, 0.0), "kick_direction": (dx / d, dy / d), "kick_power": 1.0}
         else:
-            ty = by * 0.42
-            if bvx < -1.0:
-                t = (kx - bx) / bvx
-                if 0.0 < t < 3.0:
-                    ty = by + bvy * t
-            lim = self.GW - 0.6
-            ty = lim if ty > lim else (-lim if ty < -lim else ty)
-            dx = kx - gx_; dy = ty - gy_
-            d = hypot(dx, dy)
-            out[0] = {"movement": (0.0, 0.0)} if d < 0.35 else {"movement": (dx / d, dy / d)}
+            sweep = False
+            if bx < -32.0 and abs(by) < 16.0 and bsp2 < 30.0:
+                gkd2 = (bx - gx_) ** 2 + (by - gy_) ** 2
+                closer = False
+                for j in range(1, 5):
+                    _, px, py, _ = mp[j]
+                    if (bx - px) ** 2 + (by - py) ** 2 < gkd2:
+                        closer = True
+                        break
+                if not closer:
+                    sweep = True
+
+            if sweep:
+                dx = bx - gx_; dy = by - gy_
+                d = hypot(dx, dy) or 1.0
+                out[0] = {"movement": (dx / d, dy / d)}
+            else:
+                ty = by * 0.42
+                if bvx < -1.0:
+                    t = (kx - bx) / bvx
+                    if 0.0 < t < 3.0:
+                        ty = by + bvy * t
+                lim = self.GW - 0.6
+                ty = lim if ty > lim else (-lim if ty < -lim else ty)
+                dx = kx - gx_; dy = ty - gy_
+                d = hypot(dx, dy)
+                out[0] = {"movement": (0.0, 0.0)} if d < 0.35 else {"movement": (dx / d, dy / d)}
 
         # ---- outfield --------------------------------------------------
         for i in range(1, 5):
