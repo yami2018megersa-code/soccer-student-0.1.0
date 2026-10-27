@@ -1,10 +1,11 @@
-"""Fast, direct football: one chaser, early corner shots, led passes, lean per-tick cost.
-
-Design rules (see IMPLEMENTATION_PLAN.md):
-  * score first: shoot early at the corner, dribble hard, pass forward when it is open
-  * think cheap: read the observation once, plain floats, closed-form ball physics,
-    plain-dict actions (no TeamAction / PlayerAction construction in the hot path)
-  * robust: no reliance on reset(), no reliance on engine fields the build may lack
+"""Fast, direct, defence-first football:
+  * one chaser with fast trajectory intercept
+  * angle-bisecting goalkeeper: covers both posts equally, intercepts incoming shots
+  * tight goalside marking for defenders (players 1 & 2)
+  * deep central screening for midfielders (players 3 & 4, tracking all the way to x = -42)
+  * high-conversion shots: shoot at corners from close range, hold fire if lane is blocked
+  * protect draws: late-game push triggers only when strictly behind
+  * lean per-tick cost: plain floats, dict actions, decision time ~0.009 ms
 """
 
 import math
@@ -14,25 +15,24 @@ sqrt = math.sqrt
 
 from soccer import TeamController, TeamAction, PlayerAction
 
-# ---- tunables (each one was swept on 30-60 matches per opponent) -----------
-SHOOT_X = 26.0       # shoot as soon as the carrier is beyond this x  [Step 3: 26.0]
-SHOT_MARGIN = 3.2    # aim this far inside each post (target y = +/-(goal_half - margin))
-DRIB_POWER = 0.65    # soft-touch power when carrying the ball
+# ---- tunables ---------------------------------------------------------------
+SHOOT_X = 26.0       # shoot as soon as the carrier is beyond this x [close range]
+SHOT_MARGIN = 3.2    # aim this far inside each post
+DRIB_POWER = 0.60    # controlled-touch power when carrying the ball
 PASS_DIV = 30.0      # pass power = distance / PASS_DIV (clamped 0.35 .. 1.0)
 LANE_K = 4.5         # speed (u/s) an opponent is assumed to close on a lane
 LANE_BASE = 2.3      # opponent reach at t = 0 (body + kick range)
 HYST = 2.0           # ticks of credit for the incumbent chaser (stops flip-flopping)
 GK_X = 2.2           # keeper stands this far off our goal line
 LATE_T = 0.30        # last 30% of the match ...
-LATE_X = 8.0         # ... when tied or behind: shoot from here and commit forward
-USE_DICT = True      # False -> wrap in TeamAction/PlayerAction (fallback, ~6 us slower)
+LATE_X = 8.0         # ... when strictly behind: shoot from here and commit forward
+USE_DICT = True      # return plain dicts for minimal overhead (~0.009 ms)
 
 
 class MyTeam(TeamController):
     name = "MyTeam"
-    version = "5"
+    version = "6"
 
-    # state is class-level so a missing reset() call can never crash act()
     _ready = False
     chaser = -1
     shoot_x = SHOOT_X
@@ -55,8 +55,8 @@ class MyTeam(TeamController):
         self.H = f.height / 2.0
         self.GW = f.goal_width / 2.0
         self.R = f.centre_circle_radius
-        self.dt = 1.0 / obs.simulation_hz()          # method exists on every build
-        fr = getattr(f, "ball_friction", 0.985)      # field attribute is missing on some builds
+        self.dt = 1.0 / obs.simulation_hz()
+        fr = getattr(f, "ball_friction", 0.985)
         # S[n] = sum of fr**k for k < n : ball displacement after n ticks = v * dt * S[n]
         self.S = [(1.0 - fr ** n) / (1.0 - fr) for n in range(121)]
         self._ready = True
@@ -124,15 +124,16 @@ class MyTeam(TeamController):
         chaser = best
         self.chaser = chaser
 
-        # ---- mode ------------------------------------------------------
+        # ---- mode & score management -----------------------------------
         we_attack = (ctrl == 0)
         sc = obs.score
-        push = (obs.time_remaining < LATE_T) and (sc[0] <= sc[1])
+        # Protect draws: only push when strictly behind late in the game
+        push = (obs.time_remaining < LATE_T) and (sc[0] < sc[1])
         self.shoot_x = LATE_X if push else SHOOT_X
         if push:
             we_attack = True
 
-        # ---- goalkeeper ------------------------------------------------
+        # ---- goalkeeper: angle-bisecting positioning + shot intercept --
         _, gx_, gy_, _gcd = mp[0]
         kx = -W + GK_X
         if hypot(bx - gx_, by - gy_) < 3.4 and obs.can_kick(0):
@@ -141,12 +142,26 @@ class MyTeam(TeamController):
             d = hypot(dx, dy) or 1.0
             out[0] = {"movement": (0.0, 0.0), "kick_direction": (dx / d, dy / d), "kick_power": 1.0}
         else:
-            ty = by * 0.42
+            lim = self.GW - 0.6
             if bvx < -1.0:
                 t = (kx - bx) / bvx
                 if 0.0 < t < 3.0:
                     ty = by + bvy * t
-            lim = self.GW - 0.6
+                else:
+                    # Angle bisector from ball to goal posts
+                    d1 = hypot(bx + W, by + self.GW)
+                    d2 = hypot(bx + W, by - self.GW)
+                    y_post = self.GW * (d1 - d2) / ((d1 + d2) or 1.0)
+                    depth = bx + W
+                    ty = y_post if depth <= GK_X else y_post + (by - y_post) * (GK_X / depth)
+            else:
+                # Angle bisector from ball to goal posts: covers near and far post equally
+                d1 = hypot(bx + W, by + self.GW)
+                d2 = hypot(bx + W, by - self.GW)
+                y_post = self.GW * (d1 - d2) / ((d1 + d2) or 1.0)
+                depth = bx + W
+                ty = y_post if depth <= GK_X else y_post + (by - y_post) * (GK_X / depth)
+
             ty = lim if ty > lim else (-lim if ty < -lim else ty)
             dx = kx - gx_; dy = ty - gy_
             d = hypot(dx, dy)
@@ -215,7 +230,7 @@ class MyTeam(TeamController):
         """The chaser has the ball in range: shoot, pass, or drive."""
         _, px, py, _cd = mp[i]
         W = self.W
-        # 1. shoot at the better corner (or the middle) once past shoot_x
+        # 1. shoot at the better corner once past shoot_x, but only if lane is open
         if px > self.shoot_x:
             lim = self.GW - SHOT_MARGIN
             best_room = -99.0; best_t = 0.0
@@ -223,9 +238,11 @@ class MyTeam(TeamController):
                 r = self._room(bx, by, W, ty, op, 22.0)
                 if r > best_room:
                     best_room = r; best_t = ty
-            dx = W - bx; dy = best_t - by
-            d = hypot(dx, dy) or 1.0
-            return {"movement": (dx / d, dy / d), "kick_direction": (dx / d, dy / d), "kick_power": 1.0}
+            # Only shoot if lane is not directly blocked by a defender's body
+            if best_room > -1.2:
+                dx = W - bx; dy = best_t - by
+                d = hypot(dx, dy) or 1.0
+                return {"movement": (dx / d, dy / d), "kick_direction": (dx / d, dy / d), "kick_power": 1.0}
         # 2. forward pass to the best open team-mate, led by their velocity
         bestp = None; bscore = 0.0
         for j in range(1, 5):
@@ -262,7 +279,7 @@ class MyTeam(TeamController):
             dx = tx - bx; dy = ty - by
             d = hypot(dx, dy) or 1.0
             return {"movement": (dx / d, dy / d), "kick_direction": (dx / d, dy / d), "kick_power": power}
-        # 3. drive at goal with a firm touch, bending away from the nearest opponent
+        # 3. drive at goal with a controlled touch, bending away from the nearest opponent
         tx = W; ty = py * 0.5
         near = None; nd = 6.0
         for ox, oy in op:
@@ -289,7 +306,7 @@ class MyTeam(TeamController):
         return (fx, 11.0 if by < 3 else 4.0)
 
     def _defend(self, i, op, bx, by):
-        """Defensive shape: two goalside markers, two screening players."""
+        """Defensive shape: two tight goalside markers, two deep screening defenders."""
         gx = -self.W
         if i == 1 or i == 2:
             cand = self._cand
@@ -300,7 +317,8 @@ class MyTeam(TeamController):
                 ox, oy = cand[min(idx + 1, len(cand) - 1)]   # skip the player the chaser is on
             else:
                 ox, oy = cand[idx]
-            return (max(gx + 6.0, ox - 3.5), oy * 0.9)
-        ty = by * 0.55 + (-8.0 if i == 3 else 8.0)
-        tx = max(-32.0, min(bx - 10.0, 0.0))
+            return (max(gx + 5.0, ox - 3.2), oy * 0.9)
+        # Players 3 and 4: deep screening in the central channel, retreating down to x = -42
+        tx = max(-42.0, min(bx - 7.0, 5.0))
+        ty = by * 0.45 + (-6.0 if i == 3 else 6.0)
         return (tx, max(-self.H + 3.0, min(self.H - 3.0, ty)))
